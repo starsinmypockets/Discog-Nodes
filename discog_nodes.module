@@ -1,0 +1,155 @@
+<?php
+//get ebay store listings from wdcd radio:
+
+ 
+include 'class.eBaySession.php';
+include 'class.discogsApi.php';
+  
+/* 
+ * implement hook_node_view 
+ * for debugging
+ */
+ 
+ function discog_nodes_node_view($node, $view_mode, $langcode) {
+	//krumo($node);
+ }
+
+/*
+ * Implement hook_menu
+ */
+ 
+ function discog_nodes_menu() {
+ 	
+   $items['discog_nodes'] = array(
+     'title' => 'Generate discog nodes',
+     'description' => 'Get all current ebay listings from wdcd store, search for them via api.discogs.com, and create drupal nodes',
+     'page callback' => 'get_discog_info',
+     'access arguments' => array('administer content'),
+     'type' => MENU_CALLBACK,
+   );
+   
+   return $items;
+ }
+ 
+ /*
+  *
+  */
+  
+ function get_discog_info() {
+   //get new ebay shopping api session
+   $endpoint = 'http://open.api.ebay.com/shopping?';
+   $compatibilityLevel = '731';
+   $callName = 'GetSingleItem';
+   $ebay = new eBaySession($endpoint, $compatibilityLevel, 
+							$callName);
+   $discogs = new discogsApi($ebay);
+   $wdcd_ebay_items = return_items($ebay, $discogs);
+   foreach ($wdcd_ebay_items as $index => $item) {
+     //if discogs doesn't return a result for an item, move it to a seperate array 
+     if (!isset($item['discogs'])) {
+       $wdcd_items_unlisted[$index] = $item;
+       unset($wdcd_ebay_items[$index]);
+       //return this as theme('list', $wdcd_items_unlisted) or somesuch
+     }
+   }
+   //we should have two arrays - one with discog info, one without  
+   dpm($wdcd_ebay_items);
+   foreach ($wdcd_ebay_items as $item) {
+     //make nodes!
+     $mapped[] = map_discogs_to_node($item);
+   }
+   return $mapped;
+ } 
+ 
+/* 
+ * Get ebay id and title from eBay shopping api
+ */
+ 
+function return_items($ebay, $discogs) {
+	foreach ($ebay->geteBayListings(2)->searchResult->item as $item) {
+			$id = (string) $item->itemId;
+			$wdcd_items[$id]['eBaySellPrice'] = (int) $item->sellingStatus->currentPrice;
+			$wdcd_items[$id]['eBayTitle'] = (string) $item->title;
+			$wdcd_items[$id]['discogs'] = $discogs->discogs_search($item->title, $ebay);		
+	}
+	krumo($wdcd_items);
+	return $wdcd_items;
+}
+ 
+ /*
+  * reads file from discogs image uri and saves to drupal file system
+  * Returns fid of the created file
+  */
+  
+ function save_discogs_image($uri) {
+   ini_set('user_agent', 'unique_key');
+   $contents = file_get_contents($uri);
+   //$filename = 'dcg_img-' . rand(10000,99999);
+   //krumo($filename);
+   $file = file_save_data($contents);
+   return $file;  
+ }
+ 
+ /* 
+  * Map from returned discogs array to drupal node.  
+  */
+  
+ function map_discogs_to_node($item) {
+ 	$node = new stdClass();
+ 	$node->type = 'record_display';
+ 	$node->title = $item['eBayTitle'];
+ 	$node->field_price['und'][0]['value'] = $item['eBaySellPrice'];
+ 	node_object_prepare($node); //do some drupal stuff to the new node
+  	$i = 0;
+ 	foreach ($item['discogs']['artists'] as $artist) {
+ 	  $node->field_artist['und'][$i]['tid'] = _handle_taxonomy($artist, 12);
+ 	  $i++;
+ 	}
+ 	$i = 0;
+ 	foreach ($item['discogs']['genres'] as $genre) {
+ 	  $node->field_genre['und'][$i]['tid'] = _handle_taxonomy($genre, 13);
+ 	  $i++;
+  	}
+  	//discogs 'styles' fields are also handled as genres - check for dupes?
+	if (isset($item['discogs']['imageUri'])) {
+      //krumo(save_discogs_image($item['discogs']['imageUri']));
+      $node->field_image['und'][0]['fid'] = save_discogs_image($item['discogs']['imageUri'])->fid;
+	}
+  	$i = 0;
+ 	foreach ($item['discogs']['labels'] as $label) {
+ 	  $node->field_record_label['und'][$i]['tid'] = _handle_taxonomy($label, 14);
+ 	  $i++;
+  	}  
+  	$i = 0;
+  	foreach ($item['discogs']['tracklist'] as $index => $value) {
+  	    $node->field_tracks['und'][$i]['value'] .= $index . ' - ' . $value ;
+  	    $i++;
+  	}
+ 	node_save($node);
+ 	return $node;
+ }
+ 
+ 
+ /*
+  * Search current taxonomy terms (by vid) for term and return existing tid  
+  * or create new taxonomy term and return tid. 
+  */
+  
+ function _handle_taxonomy($name, $vid) {
+ 	//if term exists, return tid
+ 	if (taxonomy_get_term_by_name($name)) {
+ 	  $term = taxonomy_get_term_by_name($name); 
+ 	  reset($term);
+ 	  return current($term)->tid; 
+    } else {
+ 	  //if no term exist, create it and return tid  
+ 	  $term = new stdClass();
+ 	  $term->name = $name;
+ 	  $term->vid = $vid;
+ 	  $newterm = taxonomy_term_save($term);
+	  //now look up term name and return (workaround since $newterm->tid fails :/)
+	  $now_term = taxonomy_get_term_by_name($name); 
+ 	  reset($now_term);
+ 	  return current($now_term)->tid;
+ 	}
+ }

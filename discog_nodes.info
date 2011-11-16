@@ -1,0 +1,7 @@
+; $Id: admin_menu.info,v 1.14 2011/01/06 23:59:22 sun Exp $
+name = Discog Nodes
+description = "Matches ebay item descriptions to discog api, then maps api info to drupa nodes"
+
+version = 7.x-3.x-dev
+core = 7.x
+project = discog_nodes
