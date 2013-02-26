@@ -1,7 +1,7 @@
 <?php
 //get ebay store listings from wdcd radio:
 
- 
+#add docs here... 
 include 'class.eBaySession.php';
 include 'class.discogsApi.php';
   
